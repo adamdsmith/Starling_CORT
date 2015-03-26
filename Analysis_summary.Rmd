@@ -27,7 +27,7 @@ In all cases, the witnessed "attack" represents an extremely acute (2 - 8 sec) s
 2. (human) Observation of a human "attack" on a conspecific (mean ± SD: 100.7 ± 22.8 min)  
 3. (raptor) Observation of a raptor attack (usually falcon) on a conspecific (mean ± SD: 108.0 ± 27.5 min)  
 
-<img src="./Figures/BI_trapping_arena.png" width="1333" height="568">
+<img src="./Figures/BI_trapping_arena.png">
 <br>
 **Figure 1**. Experimental setup.  See text for details.
 
