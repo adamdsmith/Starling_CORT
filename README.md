@@ -5,3 +5,13 @@ Authors (affiliation):
 - Adam D. Smith (Department of Natural Resources Science, University of Rhode Island)
 - Sara E. Bebus (Department of Biological Sciences, University of Memphis)
 - Stephan J. Schoech (Department of Biological Sciences, University of Memphis)
+
+To run the analysis:
+
+1. Fork this repository
+2. Open R on a computer with internet access
+3. Install devtools and knitr, if necessary 
+  - install.packages("devtools")
+  - install.packages("knitr")
+4. Knit the file to produce an html document
+  - knit2html('PATH/TO/Analysis_summary.Rmd')
