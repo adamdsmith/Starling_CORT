@@ -15,4 +15,4 @@ To run the analysis:
   - install.packages("knitr")
 4. Knit the file to produce an html document
   - knitr::knit2html('PATH/TO/Analysis_summary.Rmd')
-5. Open the resulting html file (Analysis.summary.html) in your favorite browser
+5. Open the resulting html file (Analysis_summary.html) in your favorite browser
