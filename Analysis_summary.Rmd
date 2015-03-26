@@ -1,0 +1,284 @@
+---
+title: "Stress (CORT) response to witnessing attacks on a conspecific"
+author: "Blake Jones, Adam Smith, Sara Bebus, Steve Shoech"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    css: custom.css
+    theme: united
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 250)
+```
+# Primary questions
+
+1. Is there a stress response (measured by CORT [ng/mL]) after witnessing a predator attack on a conspecific?  
+2. Is there a difference between a natural avian predator attack vs. human attack?  
+
+In all cases, the witnessed "attack" represents an extremely acute (2 - 8 sec) stressor, which contrasts markedly with how tests of "acute" stressors have been performed up to this point.
+
+# Experimental design summary
+**See manuscript for more details**
+18 test starlings (*Sturnus vulgaris*) observed, from a distance of 4 m, a conspecific lure experience one of three stressors (treatments) of interest:    
+1. (control) Lure not attacked, but subjects sat in observation cages (with lure movement as in a raptor attack) for a randomly selected time (mean ± SD: 105.0 ± 25.1 min)  
+2. (human) Observation of a human "attack" on a conspecific (mean ± SD: 100.7 ± 22.8 min)  
+3. (raptor) Observation of a raptor attack (usually falcon) on a conspecific (mean ± SD: 108.0 ± 27.5 min)  
+
+<img src="./Figures/BI_trapping_arena.png" width="1333" height="568">
+<br>
+**Figure 1**. Experimental setup.  See text for details.
+
+# Statistical analysis summary
+We evaluated the effects of attack treatment of CORT response using a linear mixed effects model in R (version 3.0.3; R Core Team 2014) with the nlme package (Pinheiro et al. 2014).  Our experimental design constituted an 18-sequence, 4-period, 3-treatment crossover design. The design provided a strongly-balanced test with respect to first-order carryover effects, allowed us to evaluate  so-called 'self' and 'mixed' carryover effects (Kumert & Stufken 2002), and guaranteed that carryover effects were not aliased with treatment or period effects. We randomly assigned a single individual to each of 18 unique sequences.  A "wash-out" period of at least 24 h between treatments allowed CORT to return to baseline levels and reduced the possibility of carryover effects in CORT measurements. 
+
+In addition to treatment, period, first-order carryover, and carryover type (i.e., 'self' or 'mixed') effects, we allowed for a possible interaction between carryover type and first-order carryover effects.  We also included four covariates in the analysis: active body or flight feather molt (yes/no), witness sex and baseline CORT measured prior to the experiment in the standardized capture and handling stress series, and length of time waiting in observation cage prior to treatment.  Residual variance increased with the expected CORT response, so we modelled this heterogeneity as an exponential function of the fitted CORT values (Pinheiro and Bates 2000).  We included random intercepts for individuals and each of the 26 treatment events required to complete the experiment; however, there was no excess variability attributable to treatment events beyond residual variation, so we excluded this random effect from the model.  Data and code for the analysis are provided at TBD. 
+
+Annotated R code follows:
+
+## Load aliases, functions, and necessary packages
+```{r loadstuff, message=FALSE}
+# Load some useful aliases and functions
+devtools::source_gist(9216051) # Rprofile.R
+devtools::source_gist(9216061) # various.R
+
+# Loading required packages
+toLoad = c("lsmeans", "multcomp", "gridExtra", "nlme", "equivalence", "plyr", 
+           "psych", "bbmle", "reshape2", "ggplot2", "gtable")
+instant_pkgs(toLoad)
+```
+
+## Load the data
+Treatments (`trt`) are 1 (control), 2 (human), and 3 (raptor); `molt` is no/yes (0/1).  `cort0` and `stress0` refer to the baseline and stress response measured before the experiment.  `id` denotes the individual (n = 18).  `event` records the grouping of individuals observing a given treatment (26 events necessary to complete the experiment).  `attck_time` notes the length of time that individuals sat in observation cages prior to the treatment.  
+
+## Raw data plots
+The bottom row shows the relationship between all variables of interest (X-axis in each) and measured CORT (Y-axis).  Note the strong association between treatment and CORT.  There is essentially no multicollinearity. 
+```{r loaddata, fig.height=10, fig.width=12, echo=FALSE}
+# Load the data
+dat <- convert.magic(read.csv("./Data/bicort.csv", header = TRUE),
+                     types = c(rep("factor", 10), rep("integer", 2),
+                               rep("numeric", 3)))
+# Format sex so we can plot it in the pairs plot
+dat$sex_M <- as.numeric(as.factor(dat$sex)) - 1
+
+pairs.panels(dat[, c("cort0", "stress0", "trt", "event", "attck_time", 
+                     "period", "priorprd", "self", "molt", "sex_M", "cort")],
+             scale=TRUE, ellipses=FALSE)
+
+dat <- within(dat, {
+  # Create dummy variables for carryover effect estimation in nlme
+  prev_human = factor(ifelse(priorprd == "2", 1, 0))
+  prev_raptor = factor(ifelse(priorprd == "3", 1, 0))
+  # Create additional dummy variables for carryover type/carryover interaction exploration
+  self_human = factor(ifelse(self == 1 & priorprd == 2, 1, 0))
+  self_raptor = factor(ifelse(self == 1 & priorprd == 3, 1, 0))
+  mixed_control = factor(ifelse(self == 0 & priorprd == 1, 1, 0))
+  mixed_human = factor(ifelse(self == 0 & priorprd == 2, 1, 0))
+  mixed_raptor = factor(ifelse(self == 0 & priorprd == 3, 1, 0))
+  # Add dummy grouping variable for groupedData for nlme (crossed random effect model)
+  dGroup = 1
+})
+```
+
+## Initial model fit and diagnostics
+We first fit an initial `lme` model that assumes homogeneous error.  
+```{r base_nlme, fig.height=8, fig.width=10}
+# Create grouped data set for nlme
+datGrouped <- groupedData(cort ~ trt | dGroup, data=dat)
+
+# This first model allows random intercepts for individuals and treatment events
+# Random effect variance for events is essentially zero so simplify model to 
+# include only individual random effect variance
+modBase <- lme(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
+                 molt + sex + cort0 + attck_time, 
+            random = pdBlocked(list(pdIdent(~id-1), pdIdent(~event-1))),
+            data=datGrouped)
+
+# Random effect variances
+# Individual
+apply(ranef(modBase)[1, 1:18], 1, var)
+# Event
+apply(ranef(modBase)[1, -1:-18], 1, var)
+
+# Create new grouped data set for nlme
+datGrouped <- groupedData(cort ~ trt | id, data=dat)
+
+# Fit simplified base model
+modBase <- lme(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
+                 molt + sex + cort0 + attck_time, 
+            random = ~ 1,
+            data=datGrouped)
+
+# Diagnostics from lme model
+grid.arrange(plot(modBase, type=c("p","smooth")),
+             plot(modBase, resid(., type="p") ~ as.numeric(trt)),
+             plot(modBase, sqrt(abs(resid(.)))~fitted(.), id=0.05, idLabels = ~ trt,
+                  type=c("p","smooth"),ylab=expression(sqrt(abs(resid)))),
+             qqnorm(modBase,abline=c(0,1)))
+```
+
+## Heterogeneous error model
+The diagnostic plots from the base model indicate clear heteroscedacity in the residuals.  The natural step to accomodate variance heterogeneity in this case is to allow separate variance estimates for each treatment.  This greatly improves the model fit and, as illustrated next, model diagnostics. 
+```{r hetero_nlme}
+# Now the model allowing heterogeneity
+# First, define the variance structure
+# Vary separately for each treatment
+vId <- varIdent(form = ~ 1 | trt)
+
+# Fit the variances separately by treatment
+modId <- lme(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
+                 molt + sex + cort0 + attck_time, 
+             random = ~ 1,
+             weights = vId,
+             data=datGrouped)
+AICctab(modBase, modId, nobs = nrow(dat), weights=T) # Exponential preferred 
+```
+
+Model diagnostics are improved, although the control treatment remains slightly less variable than the others.
+```{r exp_diagnostics, fig.height=8, fig.width=10}
+grid.arrange(plot(modId,type=c("p","smooth")),
+             qplot(dat$trt, resid(modId, type="p"), 
+                   xlab = "Treatment", ylab = "Standardized residuals") + theme_bw(),
+             qqnorm(modId, abline=c(0,1)), ncol=2)
+```
+
+## Assessment of fixed effects
+First, we consider the necessity of the interaction between carryover effect and the type of carryover effect ("self" vs. "mixed").  There's not strong evidence of an interaction: 
+```{r test_interaction, echo=FALSE}
+anova(modId, Terms = 7:8)
+```
+
+We drop this lone interaction and thus model only the additive effects of carryover (i.e., does the treatment in the previous period influence CORT response in the current treatment) and whether the previous treatment was the same as ("self" carryover) or different from ("mixed" carryover) the current treatment.  
+
+There is little evidence that birds respond differently when the attack experienced in the preceding exposure was the same as the current exposure ("self" carryover) compared to when the prior attack was different from the current attack:
+```{r test_self, echo=FALSE}
+modId2 <- update(modId, . ~ . - self_human - self_raptor)
+anova(modId2, Terms = "self")
+```
+
+nor is there much evidence that the treatment experienced in the prior treatment influences the CORT response of the current treatment.  In other words, there is no indication of first-order carryover effects:
+```{r test_CO, echo=FALSE}
+anova(modId2, Terms = 5:6)
+```
+
+Similarly, the CORT response to a treatment did not vary consistently with when in the sequence (i.e., which period) the treatment occurred:
+```{r test_prd, echo=FALSE}
+# Test for period effects
+anova(modId2, Terms = "period")
+```
+
+## Nuisance covariates
+Before addressing the treatment effects, note than none of the covariates (baseline CORT, molt, sex, attack time) explained much variation in CORT response, although birds that sat in the observation cages for longer periods of time tended to have increased CORT responses.  This should be interpreted with caution, however, as the tests reported here are too "optimistic" in the sense that the F-test probably needs some adjustment to correct the denominator degrees of freedom (e.g., the Kenward-Roger approximation).  The K-R adjustment is not available in R for `lme` models, but the same model in SAS, which does offer the K-R adjustment, suggests that the positive association between time spent in the observation cage and CORT response is marginal (*p* = 0.05).  Nonetheless, this positive association is **opposite** of what might be expected if birds were still returning to baseline when the earliest attacks occurred.  
+```{r test_covariates, echo=FALSE}
+anova(modId2, Terms = "cort0")
+anova(modId2, Terms = "molt")
+anova(modId2, Terms = "sex")
+anova(modId2, Terms = "attck_time")
+```
+
+## Treatment effects
+In contrast to other covariates, there  is very clear evidence that the stress response varies among treatments, and that all treatments are different from each other.  The evidence remains very strong after adjusting degrees of freedom:
+```{r test_trt, echo=FALSE}
+# Test for treatment effects
+anova(modId2, Terms = "trt")
+
+# Adjusted (least squares) means
+lsmeans(modId2, pairwise ~ trt)
+lsm <- as.data.frame(summary(lsmeans(modId2, ~ trt)))
+
+# Compare with pre-experiment baseline response
+baseline <- unique(dat[, c("id", "cort0")])
+baseSD <- with(baseline, sd(cort0))
+baseline <- with(baseline, mean(cort0))
+
+# Compare with pre-experiment stress response
+stress <- unique(dat[, c("id", "stress0")])
+stressSD <- with(stress, sd(stress0))
+stress <- with(stress, mean(stress0))
+```
+
+```{r Figure2, echo=FALSE, fig.width=8, fig.height=5}
+indiv_dat <- melt(datGrouped, id.vars=c("id", "trt"), measure.vars=c("cort", "cort0", "stress0"))
+indiv_dat <- mutate(indiv_dat,
+                    trt = factor(ifelse(variable == "cort0", "cort0",
+                                        ifelse(variable == "stress0", "stress0", trt)),
+                                 levels = c("cort0", "stress0", "1", "2", "3"),
+                                 labels = c("baseline", "stress-\ninduced", "control", "human\nattack", "raptor\nattack")),
+                    when = ifelse(Left(trt, 4) == "base", "Pre-experiment", "Experiment"))
+
+indiv_dat <- ddply(indiv_dat, .(id, trt), summarize,
+                   cort = mean(value))
+
+# Setting theme for producing figure
+windowsFonts(Times=windowsFont("TT Times New Roman"))
+theme_set(theme_bw(base_size = 16))
+theme_update(panel.grid.minor = element_blank(),
+             panel.grid.major= element_blank(),
+             panel.border = element_blank(),
+             panel.background= element_blank(),
+             axis.line = element_line(color = "black"),
+             legend.position = "none",
+             plot.margin = unit(c(0, 0, 2.5, 0.5), "lines"))
+
+p <- ggplot(indiv_dat, aes(trt, cort)) + geom_boxplot() +
+  scale_y_continuous("Corticosterone (ng/mL)", limits=c(0,65), breaks=seq(0, 60, 10)) + 
+  scale_x_discrete("") +  
+  geom_segment(x=2.5, xend=2.5, y=67.5, yend=-20, linetype="longdash") +
+  theme(axis.title.y=element_text(vjust=1))
+# Or, use Times font
+#  theme(axis.title.y=element_text(vjust=0.3), text=element_text(family="Times"))
+p <- ggplotGrob(p)
+ff <- "" # Change to "Times" for Times New Roman font
+p <- gtable_add_grob(p,
+                     grobTree(textGrob("Capture-and-restraint", 
+                                       x = 0.2, y = 1.25, vjust = 1,
+                                       gp = gpar(fontsize = 14, fontfamily=ff)),
+                              textGrob("Experiment", 
+                                       x = 0.7, y = 1.25, vjust = 1,
+                                       gp = gpar(fontsize = 14, fontfamily=ff))),
+                              t=6, l=4)
+p$layout$clip <- "off"
+grid.draw(p)
+
+# Sans serif version
+#png(file="./Output/cort_boxplots.png", width = 5.5, height = 4.5, units = "in", res = 1200)
+#grid.draw(p)
+#dev.off()
+
+# Times New Roman version
+#png(file="./Output/cort_boxplotsTimes.png", width = 5.5, height = 5.5, units = "in", res = 900)
+#grid.draw(p)
+#dev.off()
+```
+<br>
+**Figure 2**. Total plasma corticosterone measured from 18 starlings during a pre-experimental standard handling stress series (baseline) and three experimental treatments.  All samples were collected within 3 minutes of initial human contact.  See text for a description of the pre-experiment stress series and experimental treatments.
+
+<hr size = "5" width="100%">
+
+## Equivalence tests
+We formally evaluate the equivalence of the stress response to a raptor attack to the handling stress response in the pre-experiment stress series.  We do likewise for the stress response of the control treatment to the pre-experiment baseline stress response.  Tests of equivalence require an *a priori* specification of how much measurements can differ and still be considered equivalent - we specify it as the standard deviation of the relevant pre-experiment stress series measurements.  Thus, for the comparison of experimental control vs. capture-and-restraint baseline CORT, differences less than `r baseSD` ng/mL are considered biologically equivalent.  For the comparison of experimental   raptor attack vs. capture-and-restraint stress CORT, differences less than `r stressSD` ng/mL are considered biologically equivalent.
+
+```{r compare_stress, echo=FALSE}
+base_dat <- ddply(subset(dat, trt == 1), .(id), summarize,
+                  experimental = mean(cort),
+                  baseline = mean(cort0),
+                  base_diff = experimental - baseline,
+                  n = length(unique(cort)))
+stress_dat <- ddply(subset(dat, trt == 3), .(id), summarize,
+                    experimental = mean(cort),
+                    baseline = mean(stress0),
+                    stress_diff = experimental - baseline,
+                    n = length(unique(cort)))
+base_tost <- with(base_dat, tost(base_diff, epsilon = baseSD))
+stress_tost <- with(stress_dat, tost(stress_diff, epsilon = stressSD))
+
+# Paired t-test of equivalence for fun
+base_ptte <- with(base_dat, ptte.stat(mean(base_diff), sd(base_diff), n = 18, Epsilon=0.25))
+stress_ptte <- with(stress_dat, ptte.stat(mean(stress_diff), sd(stress_diff), n = 18, Epsilon=0.25))
+```
+
+Two one-sided tests for equivalence (TOST; Schuirmann 1981,  Westlake 1981) indicate that in both cases the experimental and capture-and-restraint measurements are equivalent as we have defined it.  That is, the null hypothesis that the measurements were dissimilar was rejected in both cases (experimental control vs. capture-and-restraint baseline CORT: *p* = `r round(base_tost$p.value, 3)`; experimental raptor attack vs. capture-and-restraint stress CORT: *p* = `r round(stress_tost$p.value, 3)`).  It's worth noting, perhaps, that a similar conclusion is reached using a "strict" paired t-test of equivalence (as defined by Wellek 2003).
+
+
