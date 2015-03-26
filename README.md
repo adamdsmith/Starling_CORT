@@ -6,17 +6,10 @@ Authors (affiliation):
 - Sara E. Bebus (Department of Biological Sciences, University of Memphis)
 - Stephan J. Schoech (Department of Biological Sciences, University of Memphis)
 
-<<<<<<< HEAD
 To run the analysis:
 
 1. Fork this repository
 2. Open R on a computer with internet access
-=======
-The analysis can be run by:
-
-1. Fork this repository
-2. Opening R on a computer with internet access
->>>>>>> 836c55b2da0821d013bb90b59b7b2d1fac7ee6a8
 3. Install devtools and knitr, if necessary 
   - install.packages("devtools")
   - install.packages("knitr")
