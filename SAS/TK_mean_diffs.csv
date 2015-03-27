@@ -1,0 +1,4 @@
+Effect,trt,_trt,Estimate,StdErr,DF,tValue,Probt,Adjustment,Adjp,Alpha,Lower,Upper,AdjLower,AdjUpper
+trt,3,2,13.2768,3.2131,26.9,4.13,0.0003,Tukey-Kramer,0.0009,0.05,6.6828,19.8707,5.3123,21.2413
+trt,3,1,27.4391,2.9990,20.6,9.15,<.0001,Tukey-Kramer,<.0001,0.05,21.1945,33.6837,20.0053,34.8729
+trt,2,1,14.1623,1.3889,20.3,10.20,<.0001,Tukey-Kramer,<.0001,0.05,11.2682,17.0563,10.7196,17.6049
