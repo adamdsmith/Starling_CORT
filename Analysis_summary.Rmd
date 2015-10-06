@@ -45,9 +45,10 @@ devtools::source_gist(9216051) # Rprofile.R
 devtools::source_gist(9216061) # various.R
 
 # Loading required packages
-toLoad = c("lsmeans", "multcomp", "gridExtra", "nlme", "equivalence", "plyr", 
-           "psych", "bbmle", "reshape2", "ggplot2", "gtable")
+toLoad = c("lsmeans", "multcomp", "gridExtra", "lme4", "pbkrtest", "equivalence", "plyr", 
+           "psych", "bbmle", "reshape2", "ggplot2", "gtable", "MuMIn")
 instant_pkgs(toLoad)
+theme_set(theme_bw(base_size = 16))
 ```
 
 ## Load the data
@@ -57,7 +58,7 @@ Treatments (`trt`) are 1 (control), 2 (human), and 3 (raptor); `molt` is no/yes 
 The bottom row shows the relationship between all variables of interest (X-axis in each) and measured CORT (Y-axis).  Note the strong association between treatment and CORT.  There is essentially no multicollinearity. 
 ```{r loaddata, fig.height=10, fig.width=12, echo=FALSE}
 # Load the data
-dat <- convert.magic(read.csv("./Data/bicort.csv", header = TRUE),
+dat <- import.data(read.csv("./Data/bicort.csv", header = TRUE),
                      types = c(rep("factor", 10), rep("integer", 2),
                                rep("numeric", 3)))
 # Format sex so we can plot it in the pairs plot
@@ -77,77 +78,86 @@ dat <- within(dat, {
   mixed_control = factor(ifelse(self == 0 & priorprd == 1, 1, 0))
   mixed_human = factor(ifelse(self == 0 & priorprd == 2, 1, 0))
   mixed_raptor = factor(ifelse(self == 0 & priorprd == 3, 1, 0))
-  # Add dummy grouping variable for groupedData for nlme (crossed random effect model)
-  dGroup = 1
 })
 ```
 
 ## Initial model fit and diagnostics
-We first fit an initial `lme` model that assumes homogeneous error.  
+We first fit an initial `lmer` model that assumes homogeneous error.  
 ```{r base_nlme, fig.height=8, fig.width=10}
-# Create grouped data set for nlme
-datGrouped <- groupedData(cort ~ trt | dGroup, data=dat)
-
 # This first model allows random intercepts for individuals and treatment events
 # Random effect variance for events is essentially zero so simplify model to 
 # include only individual random effect variance
-modBase <- lme(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
-                 molt + sex + cort0 + attck_time, 
-            random = pdBlocked(list(pdIdent(~id-1), pdIdent(~event-1))),
-            data=datGrouped)
-
-# Random effect variances
-# Individual
-apply(ranef(modBase)[1, 1:18], 1, var)
-# Event
-apply(ranef(modBase)[1, -1:-18], 1, var)
-
-# Create new grouped data set for nlme
-datGrouped <- groupedData(cort ~ trt | id, data=dat)
+modBase <- lmer(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
+                 molt + sex + cort0 + attck_time + (1|id) + (1|event), data = dat)
 
 # Fit simplified base model
-modBase <- lme(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
-                 molt + sex + cort0 + attck_time, 
-            random = ~ 1,
-            data=datGrouped)
+modBase <- lmer(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
+                 molt + sex + cort0 + attck_time + (1|id), data = dat) 
 
-# Diagnostics from lme model
-grid.arrange(plot(modBase, type=c("p","smooth")),
-             plot(modBase, resid(., type="p") ~ as.numeric(trt)),
-             plot(modBase, sqrt(abs(resid(.)))~fitted(.), id=0.05, idLabels = ~ trt,
-                  type=c("p","smooth"),ylab=expression(sqrt(abs(resid)))),
-             qqnorm(modBase,abline=c(0,1)))
+# Diagnostics from lmer model
+# Population level residuals
+grid.arrange(qplot(predict(modBase, re.form = NA), resid(modBase, type="pearson"),
+                  xlab = "Fitted (population level)", ylab = "Standardized residual"),
+          qplot(as.numeric(dat$trt), resid(modBase, type="pearson"), ylab = "Standardized residual"),
+          qplot(predict(modBase, re.form = NA), sqrt(abs(resid(modBase, type = "pearson"))), 
+                xlab = "Fitted (population level)", ylab=expression(sqrt(abs(resid)))), 
+          ncol = 2)
 ```
 
 ## Heterogeneous error model
 The diagnostic plots from the base model indicate clear heteroscedacity in the residuals.  The natural step to accomodate variance heterogeneity in this case is to allow separate variance estimates for each treatment.  This greatly improves the model fit and, as illustrated next, model diagnostics. 
-```{r hetero_nlme}
-# Now the model allowing heterogeneity
-# First, define the variance structure
-# Vary separately for each treatment
-vId <- varIdent(form = ~ 1 | trt)
+```{r hetero_lmer}
+# First, create an observation-level factor variable
+# This lets us specify variances separately by treatment
+dat <- transform(dat, obs = factor(seq(nrow(dat))))
 
 # Fit the variances separately by treatment
-modId <- lme(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
-                 molt + sex + cort0 + attck_time, 
-             random = ~ 1,
-             weights = vId,
-             data=datGrouped)
-AICctab(modBase, modId, nobs = nrow(dat), weights=T) # Exponential preferred 
+modId <- lmer(cort ~ trt + period + self + prev_human + prev_raptor + self_human + self_raptor + 
+                molt + sex + cort0 + attck_time + (1|id) + (0 + dummy(trt, "2")|obs) +
+                (0 + dummy(trt, "3")|obs), 
+              control=lmerControl(check.nobs.vs.nlev="ignore",
+                                check.nobs.vs.nRE="ignore"),
+              data = dat)
+AICctab(modBase, modId, nobs = nrow(dat), weights=T) # Heterogeneous preferred 
 ```
 
-Model diagnostics are improved, although the control treatment remains slightly less variable than the others.
+Model diagnostics are greatly improved in the heterogeous model.
 ```{r exp_diagnostics, fig.height=8, fig.width=10}
-grid.arrange(plot(modId,type=c("p","smooth")),
-             qplot(dat$trt, resid(modId, type="p"), 
-                   xlab = "Treatment", ylab = "Standardized residuals") + theme_bw(),
-             qqnorm(modId, abline=c(0,1)), ncol=2)
+# Get Pearson residuals
+# Requires some manipulation of merMod object because of odd random effect structure 
+# specification necessary to fit heterogeneous model
+pres <- function(raw_resids, trts, merMod) {
+  pres <- rep(0, length(raw_resids))
+  for (i in 1:length(raw_resids)) {
+    res <- raw_resids[i]
+    trt <- trts[i]
+    j <- switch(trt, 
+                control = 3,
+                human = 2,
+                raptor = 1)
+    
+    var <- summary(modId)$varcor[[j]][1] + sigma(merMod)^2
+    pres[i] <- res / sqrt(var)
+  }
+  pres
+}
+
+resids_raw <- dat$cort - predict(modId, re.form = NA)
+resids_p <- pres(resids_raw, as.character(dat$trt_name), modId)
+
+grid.arrange(qplot(predict(modId, re.form = NA), resids_p,
+                  xlab = "Fitted (population level)", ylab = "Standardized residual"),
+          qplot(as.numeric(dat$trt), resids_p, ylab = "Standardized residual"),
+          qplot(predict(modId, re.form = NA), sqrt(abs(resids_p)), 
+                ylab=expression(sqrt(abs(standardized_residual)))), 
+          ncol = 2)
+
 ```
 
 ## Assessment of fixed effects
 First, we consider the necessity of the interaction between carryover effect and the type of carryover effect ("self" vs. "mixed").  There's not strong evidence of an interaction: 
 ```{r test_interaction, echo=FALSE}
-anova(modId, Terms = 7:8)
+KRmodcomp(modId, update(modId, . ~ . - self_human - self_raptor))
 ```
 
 We drop this lone interaction and thus model only the additive effects of carryover (i.e., does the treatment in the previous period influence CORT response in the current treatment) and whether the previous treatment was the same as ("self" carryover) or different from ("mixed" carryover) the current treatment.  
@@ -155,37 +165,37 @@ We drop this lone interaction and thus model only the additive effects of carryo
 There is little evidence that birds respond differently when the attack experienced in the preceding exposure was the same as the current exposure ("self" carryover) compared to when the prior attack was different from the current attack:
 ```{r test_self, echo=FALSE}
 modId2 <- update(modId, . ~ . - self_human - self_raptor)
-anova(modId2, Terms = "self")
+KRmodcomp(modId2, update(modId2, . ~ . - self))
 ```
 
 nor is there much evidence that the treatment experienced in the prior treatment influences the CORT response of the current treatment.  In other words, there is no indication of first-order carryover effects:
 ```{r test_CO, echo=FALSE}
-anova(modId2, Terms = 5:6)
+KRmodcomp(modId2, update(modId2, . ~ . - prev_human - prev_raptor))
 ```
 
 Similarly, the CORT response to a treatment did not vary consistently with when in the sequence (i.e., which period) the treatment occurred:
 ```{r test_prd, echo=FALSE}
 # Test for period effects
-anova(modId2, Terms = "period")
+KRmodcomp(modId2, update(modId2, . ~ . - period))
 ```
 
 ## Nuisance covariates
 Before addressing the treatment effects, note than none of the covariates (baseline CORT, molt, sex, attack time) explained much variation in CORT response, although birds that sat in the observation cages for longer periods of time tended to have increased CORT responses.  This should be interpreted with caution, however, as the tests reported here are too "optimistic" in the sense that the F-test probably needs some adjustment to correct the denominator degrees of freedom (e.g., the Kenward-Roger approximation).  The K-R adjustment is not available in R for `lme` models, but the same model in SAS, which does offer the K-R adjustment, suggests that the positive association between time spent in the observation cage and CORT response is marginal (*p* = 0.05).  Nonetheless, this positive association is **opposite** of what might be expected if birds were still returning to baseline when the earliest attacks occurred.  
 ```{r test_covariates, echo=FALSE}
-anova(modId2, Terms = "cort0")
-anova(modId2, Terms = "molt")
-anova(modId2, Terms = "sex")
-anova(modId2, Terms = "attck_time")
+KRmodcomp(modId2, update(modId2, . ~ . - cort0))
+KRmodcomp(modId2, update(modId2, . ~ . - molt))
+KRmodcomp(modId2, update(modId2, . ~ . - sex))
+KRmodcomp(modId2, update(modId2, . ~ . - attck_time))
 ```
 
 ## Treatment effects
 In contrast to other covariates, there  is very clear evidence that the stress response varies among treatments, and that all treatments are different from each other.  The evidence remains very strong after adjusting degrees of freedom:
 ```{r test_trt, echo=FALSE}
 # Test for treatment effects
-anova(modId2, Terms = "trt")
+KRmodcomp(modId2, update(modId2, . ~ . - trt))
 
 # Adjusted (least squares) means
-lsmeans(modId2, pairwise ~ trt)
+(paired_trt_diffs <- as.data.frame(summary(lsmeans(modId2, pairwise ~ trt)$contrast)))
 lsm <- as.data.frame(summary(lsmeans(modId2, ~ trt)))
 
 # Compare with pre-experiment baseline response
@@ -197,10 +207,35 @@ baseline <- with(baseline, mean(cort0))
 stress <- unique(dat[, c("id", "stress0")])
 stressSD <- with(stress, sd(stress0))
 stress <- with(stress, mean(stress0))
+
+# Variance explained
+R2 <- r.squaredGLMM(modId2)
+
+# Effect size estimates for raptor - control & raptor - human
+cohens_d <- function(comparison) {
+  diff <- paired_trt_diffs[comparison, "estimate"]
+  sd <- paired_trt_diffs[comparison, "SE"] * sqrt(length(unique(dat$id)))
+  d <- diff/sd
+  d
+}
+
+# Raptor - control
+rc_effect <- cohens_d(2) * -1
+
+# Raptor - human
+rh_effect <- cohens_d(3) * -1
 ```
 
+### Effect sizes
+
+The effect sizes (Cohen's D) for the comparison of raptor attack with the control and human attack were `r round(rc_effect, 2)` and `r round(rh_effect, 2)`, respectively.
+
+## Variance explained
+
+The marginal (i.e., variance explained by fixed effects) *R*^2^ values for our final linear mixed model, as defined by Nakagawa and Schielzeth (2013), is `r round(R2[1], 2)`.  We do not report the conditional R^2^ given the slightly contrived random effects structure necessary to fit the heterogeneous variance model in `lme4`.
+
 ```{r Figure2, echo=FALSE, fig.width=8, fig.height=5}
-indiv_dat <- melt(datGrouped, id.vars=c("id", "trt"), measure.vars=c("cort", "cort0", "stress0"))
+indiv_dat <- melt(dat, id.vars=c("id", "trt"), measure.vars=c("cort", "cort0", "stress0"))
 indiv_dat <- mutate(indiv_dat,
                     trt = factor(ifelse(variable == "cort0", "cort0",
                                         ifelse(variable == "stress0", "stress0", trt)),
@@ -258,7 +293,7 @@ grid.draw(p)
 <hr size = "5" width="100%">
 
 ## Equivalence tests
-We formally evaluate the equivalence of the stress response to a raptor attack to the handling stress response in the pre-experiment stress series.  We do likewise for the stress response of the control treatment to the pre-experiment baseline stress response.  Tests of equivalence require an *a priori* specification of how much measurements can differ and still be considered equivalent - we specify it as the standard deviation of the relevant pre-experiment stress series measurements.  Thus, for the comparison of experimental control vs. capture-and-restraint baseline CORT, differences less than `r baseSD` ng/mL are considered biologically equivalent.  For the comparison of experimental   raptor attack vs. capture-and-restraint stress CORT, differences less than `r stressSD` ng/mL are considered biologically equivalent.
+We formally evaluate the equivalence of the stress response to a raptor attack to the handling stress response in the pre-experiment stress series.  We do likewise for the stress response of the control treatment to the pre-experiment baseline stress response.  Tests of equivalence require an *a priori* specification of how much measurements can differ and still be considered equivalent - we specify it as the standard deviation of the relevant pre-experiment stress series measurements.  Thus, for the comparison of experimental control vs. capture-and-restraint baseline CORT, differences less than `r baseSD` ng/mL are considered biologically equivalent.  For the comparison of experimental   raptor attack vs. capture-and-restraint stress CORT, differences less than `r stressSD` ng/mL are considered biologically equivalent.  
 
 ```{r compare_stress, echo=FALSE}
 base_dat <- ddply(subset(dat, trt == 1), .(id), summarize,
@@ -271,6 +306,7 @@ stress_dat <- ddply(subset(dat, trt == 3), .(id), summarize,
                     baseline = mean(stress0),
                     stress_diff = experimental - baseline,
                     n = length(unique(cort)))
+
 base_tost <- with(base_dat, tost(base_diff, epsilon = baseSD))
 stress_tost <- with(stress_dat, tost(stress_diff, epsilon = stressSD))
 

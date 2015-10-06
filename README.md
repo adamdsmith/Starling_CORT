@@ -1,4 +1,4 @@
-This repository contains the data and code necessary to reproduce the analysis in the manuscript "Spectating is stressful: observing a brief raptor attack elicits a glucocorticoid response in a social passerine" submitted to the Proceedings of the Royal Society B.  
+This repository contains the data and code necessary to reproduce the analysis in the manuscript "Spectating is stressful: observing a brief raptor attack elicits a glucocorticoid response in a social passerine" in revision at *Hormones and Behavior*.  
 
 Authors (affiliation):
 - Blake C. Jones (Department of Biological Sciences, University of Memphis)
@@ -17,4 +17,3 @@ To run the analysis:
   - knitr::knit2html('PATH/TO/Analysis_summary.Rmd')
 5. Open the resulting html file (Analysis_summary.html) in your favorite browser
 
-Note that we performed degrees of freedom adjustments in SAS.  We provide the SAS script (./SAS/final_analysis.sas) that produces the adjusted tests.  We also include the relevant output of the script as two `csv` files is the SAS directory.
