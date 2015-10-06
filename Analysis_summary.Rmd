@@ -40,14 +40,13 @@ Annotated R code follows:
 
 ## Load aliases, functions, and necessary packages
 ```{r loadstuff, message=FALSE}
-# Load some useful aliases and functions
-devtools::source_gist(9216051) # Rprofile.R
-devtools::source_gist(9216061) # various.R
+source("./R/utils.R")
 
-# Loading required packages
-toLoad = c("lsmeans", "multcomp", "gridExtra", "lme4", "pbkrtest", "equivalence", "plyr", 
-           "psych", "bbmle", "reshape2", "ggplot2", "gtable", "MuMIn")
-instant_pkgs(toLoad)
+# Installing required packages
+pkgs_need = c("gridExtra", "lme4", "pbkrtest", "equivalence", "plyr", "bbmle", 
+              "ggplot2", "gtable", "reshape2", "MuMIn", "lsmeans")
+instant_pkgs(pkgs_need)
+
 theme_set(theme_bw(base_size = 16))
 ```
 
@@ -58,9 +57,9 @@ Treatments (`trt`) are 1 (control), 2 (human), and 3 (raptor); `molt` is no/yes 
 The bottom row shows the relationship between all variables of interest (X-axis in each) and measured CORT (Y-axis).  Note the strong association between treatment and CORT.  There is essentially no multicollinearity. 
 ```{r loaddata, fig.height=10, fig.width=12, echo=FALSE}
 # Load the data
-dat <- import.data(read.csv("./Data/bicort.csv", header = TRUE),
-                     types = c(rep("factor", 10), rep("integer", 2),
-                               rep("numeric", 3)))
+dat <- import_data(obj = read.csv("./Data/bicort.csv", header = TRUE),
+                   types = c(rep("factor", 10), rep("integer", 2),
+                             rep("numeric", 3)))
 # Format sex so we can plot it in the pairs plot
 dat$sex_M <- as.numeric(as.factor(dat$sex)) - 1
 
@@ -98,7 +97,8 @@ modBase <- lmer(cort ~ trt + period + self + prev_human + prev_raptor + self_hum
 # Population level residuals
 grid.arrange(qplot(predict(modBase, re.form = NA), resid(modBase, type="pearson"),
                   xlab = "Fitted (population level)", ylab = "Standardized residual"),
-          qplot(as.numeric(dat$trt), resid(modBase, type="pearson"), ylab = "Standardized residual"),
+          qplot(as.numeric(dat$trt), resid(modBase, type="pearson"), 
+                         ylab = "Standardized residual"),
           qplot(predict(modBase, re.form = NA), sqrt(abs(resid(modBase, type = "pearson"))), 
                 xlab = "Fitted (population level)", ylab=expression(sqrt(abs(resid)))), 
           ncol = 2)
@@ -126,22 +126,6 @@ Model diagnostics are greatly improved in the heterogeous model.
 # Get Pearson residuals
 # Requires some manipulation of merMod object because of odd random effect structure 
 # specification necessary to fit heterogeneous model
-pres <- function(raw_resids, trts, merMod) {
-  pres <- rep(0, length(raw_resids))
-  for (i in 1:length(raw_resids)) {
-    res <- raw_resids[i]
-    trt <- trts[i]
-    j <- switch(trt, 
-                control = 3,
-                human = 2,
-                raptor = 1)
-    
-    var <- summary(modId)$varcor[[j]][1] + sigma(merMod)^2
-    pres[i] <- res / sqrt(var)
-  }
-  pres
-}
-
 resids_raw <- dat$cort - predict(modId, re.form = NA)
 resids_p <- pres(resids_raw, as.character(dat$trt_name), modId)
 
@@ -180,7 +164,7 @@ KRmodcomp(modId2, update(modId2, . ~ . - period))
 ```
 
 ## Nuisance covariates
-Before addressing the treatment effects, note than none of the covariates (baseline CORT, molt, sex, attack time) explained much variation in CORT response, although birds that sat in the observation cages for longer periods of time tended to have increased CORT responses.  This should be interpreted with caution, however, as the tests reported here are too "optimistic" in the sense that the F-test probably needs some adjustment to correct the denominator degrees of freedom (e.g., the Kenward-Roger approximation).  The K-R adjustment is not available in R for `lme` models, but the same model in SAS, which does offer the K-R adjustment, suggests that the positive association between time spent in the observation cage and CORT response is marginal (*p* = 0.05).  Nonetheless, this positive association is **opposite** of what might be expected if birds were still returning to baseline when the earliest attacks occurred.  
+Before addressing the treatment effects, note than none of the covariates (baseline CORT, molt, sex, attack time) explained much variation in CORT response, although birds that sat in the observation cages for longer periods of time tended to have increased CORT responses.  After adjustment to correct the denominator degrees of freedom (e.g., the Kenward-Roger approximation), the positive association between time spent in the observation cage and CORT response is marginal (*p* ~ 0.05).  
 ```{r test_covariates, echo=FALSE}
 KRmodcomp(modId2, update(modId2, . ~ . - cort0))
 KRmodcomp(modId2, update(modId2, . ~ . - molt))
@@ -196,7 +180,7 @@ KRmodcomp(modId2, update(modId2, . ~ . - trt))
 
 # Adjusted (least squares) means
 (paired_trt_diffs <- as.data.frame(summary(lsmeans(modId2, pairwise ~ trt)$contrast)))
-lsm <- as.data.frame(summary(lsmeans(modId2, ~ trt)))
+as.data.frame(summary(lsmeans(modId2, ~ trt)))
 
 # Compare with pre-experiment baseline response
 baseline <- unique(dat[, c("id", "cort0")])
@@ -211,24 +195,35 @@ stress <- with(stress, mean(stress0))
 # Variance explained
 R2 <- r.squaredGLMM(modId2)
 
-# Effect size estimates for raptor - control & raptor - human
-cohens_d <- function(comparison) {
-  diff <- paired_trt_diffs[comparison, "estimate"]
-  sd <- paired_trt_diffs[comparison, "SE"] * sqrt(length(unique(dat$id)))
-  d <- diff/sd
+# Effect size estimates for raptor - control, raptor - human, & human - control
+# Adjusted for matched groups (Duncan et al. 1996)
+indiv_dat <- ddply(dat, .(id, trt), summarise,
+                   cort = mean(cort))
+indiv_dat <- reshape(indiv_dat, timevar = "trt", idvar = "id", direction = "wide")
+
+cohens_d <- function(cort1, cort2) {
+  t <- unname(t.test(cort1, cort2, paired = TRUE)$statistic)
+  r <- cor(cort1, cort2)
+  n <- length(cort1)
+  d <- t * sqrt((2 * (1 - abs(r))) / n)
   d
 }
 
+
 # Raptor - control
-rc_effect <- cohens_d(2) * -1
+rc_effect <- with(indiv_dat, cohens_d(cort.3, cort.1))
 
 # Raptor - human
-rh_effect <- cohens_d(3) * -1
+rh_effect <- with(indiv_dat, cohens_d(cort.3, cort.2))
+
+# Human - control
+hc_effect <- with(indiv_dat, cohens_d(cort.2, cort.1))
+
 ```
 
 ### Effect sizes
 
-The effect sizes (Cohen's D) for the comparison of raptor attack with the control and human attack were `r round(rc_effect, 2)` and `r round(rh_effect, 2)`, respectively.
+CORT measurements after a raptor attack on CORT were approximately `r round(rc_effect, 1)` and `r round(rh_effect, 1)` standard deviations (Cohen's *d*) greater than those after control and human attack, respectively. CORT measurements after a human attack were approximately `r round(hc_effect, 1)` standard deviations greater than the control. 
 
 ## Variance explained
 
@@ -241,14 +236,13 @@ indiv_dat <- mutate(indiv_dat,
                                         ifelse(variable == "stress0", "stress0", trt)),
                                  levels = c("cort0", "stress0", "1", "2", "3"),
                                  labels = c("baseline", "stress-\ninduced", "control", "human\nattack", "raptor\nattack")),
-                    when = ifelse(Left(trt, 4) == "base", "Pre-experiment", "Experiment"))
+                    when = ifelse(substr(trt, 1, 4) == "base", "Pre-experiment", "Experiment"))
 
 indiv_dat <- ddply(indiv_dat, .(id, trt), summarize,
                    cort = mean(value))
 
 # Setting theme for producing figure
 windowsFonts(Times=windowsFont("TT Times New Roman"))
-theme_set(theme_bw(base_size = 16))
 theme_update(panel.grid.minor = element_blank(),
              panel.grid.major= element_blank(),
              panel.border = element_blank(),
