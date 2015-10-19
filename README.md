@@ -17,5 +17,5 @@ To run the analysis:
 4. Knit the file to produce an html document
   - knitr::knit2html('PATH/TO/Analysis_summary.Rmd')
 5. Open the resulting html file (Analysis_summary.html) in your favorite browser
-  - we've included this file if you'd rather just open it directly
+  - we've included this file if you'd rather download it and open it directly
 
