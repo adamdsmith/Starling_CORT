@@ -296,3 +296,11 @@ pairs.panels <- function (x, science = c("biol", "phys"), smooth = TRUE, scale =
     }
   }
 }
+
+cohens_d <- function(cort1, cort2) {
+  t <- unname(t.test(cort1, cort2, paired = TRUE)$statistic)
+  r <- cor(cort1, cort2)
+  n <- length(cort1)
+  d <- t * sqrt((2 * (1 - abs(r))) / n)
+  d
+}
