@@ -1,4 +1,4 @@
-This repository contains the data and code necessary to reproduce the analysis in the manuscript "Two seconds is all it takes: European starlings (*Sturnus vulgaris*) increase levels of circulating glucocorticoids after witnessing a momentary raptor attack" in revision at *Hormones and Behavior*.  
+This repository contains the data and code necessary to reproduce the analysis in the manuscript "Two seconds is all it takes: European starlings (*Sturnus vulgaris*) increase levels of circulating glucocorticoids after witnessing a brief raptor attack" by Jones et al. (2016, *Hormones and Behavior* [78:72-78](http://www.sciencedirect.com/science/article/pii/S0018506X15301410)).  
 
 Authors (affiliation):
 - Blake C. Jones (Department of Biological Sciences, University of Memphis)
